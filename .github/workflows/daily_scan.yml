@@ -1,0 +1,60 @@
+name: Daily US stock scan
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 22:37 UTC is safely after the regular US close in both EST and EDT.
+    # The off-hour minute reduces the risk of GitHub scheduler congestion.
+    - cron: "37 22 * * 1-5"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-stock-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Run full NYSE/Nasdaq scan
+        run: python scanner.py --top 20 --output-dir reports
+
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-scan-${{ github.run_number }}
+          path: reports/
+          retention-days: 30
+
+      - name: Commit refreshed reports
+        continue-on-error: true
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/
+          if git diff --cached --quiet; then
+            echo "No report changes to commit."
+          else
+            git commit -m "chore: refresh daily stock scan"
+            git push
+          fi
